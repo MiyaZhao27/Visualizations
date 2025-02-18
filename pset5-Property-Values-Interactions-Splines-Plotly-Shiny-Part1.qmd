@@ -1,0 +1,364 @@
+---
+title: "Pset 5 - Plotly, Shiny, Interactions, Splines - Part 1 and 2"
+format: 
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: true
+  include: true
+  warning: false
+  message: false
+knitr:
+  opts_chunk:
+    fig.align: 'center'
+    out.width: "70%"
+    results: 'hold'
+---
+
+```{r}
+library(leaflet)
+library(sf)
+library(sp)
+library(splines)
+library(tidyverse)
+library(pubtheme)
+library(dplyr)
+library(readr)
+```
+
+Objectives
+
+-   Continued data exploration of US Census data and CT property values data using interactive visualization libraries like `leaflet`, `plotly` and `shiny`
+-   Include Interaction terms in a linear model
+-   Include spline terms in a linear model .
+
+# Choosing a home location
+
+A prospective homeowner is interested in buying a house in Connecticut. Since she works in New York City near Grand Central Terminal and her partner works in New Haven, she has the following preferences for the location of her new home:
+
+-   between NYC and New Haven,
+-   relatively close to a Metro-North train station,
+-   special preference towards stations with many options for convenient trains traveling to Grand Central Station and New Haven.
+
+She also prefers to live in a town where
+
+-   the house prices aren't *that* high, and
+-   the population is relatively diverse, and where at least 5% of the population is Asian.
+
+## 1. Visualization
+
+Create an interactive visualization or visualizations that she can use to help her make her decision. Use the data below, which contains
+
+-   US Census data (same as what we previously used in class)
+-   Latitude/longitude for Metro-North stations.
+-   For every pair of stations, information about trips between those two stations: number of trips, the mean duration, and the minimum duration. This has been filtered so that only trips to/from Grand Central, to/from New Haven, and along the train lines that are in Connecticut (New Haven Line, Danbury Line, Waterbury Line, New Canaan Line) remain.
+
+Here is the data with some light cleaning to help you get started.
+
+### Census data
+
+```{r}
+dc = readRDS('data/tracts.and.census.with.EV.stations.rds')
+dc = dc[dc$state == 'CT',]
+head(dc@data,2)
+```
+
+### Train stations
+
+```{r}
+st = read.csv('data/stops.txt')
+
+st = st %>%
+  select(stop_id, stop_code, stop_name, stop_lat, stop_lon)
+head(st)
+```
+
+### Trips
+
+```{r}
+tr = readRDS('data/trips.rds')
+
+tr = tr %>% 
+  arrange(stop1, stop2)
+head(tr, 10)
+```
+
+### Visualizations
+
+**Create your visualization(s) here.**
+
+```{r}
+##data exploration and cleaning
+
+time_to_NHV = tr %>%
+  filter(tf == "to", stop2 == "New Haven") %>%
+  select(stop1, mean) %>%
+  rename(time_to_NHV = mean)
+
+time_to_GCT = tr %>%
+  filter(tf == "to", stop2 == "Grand Central") %>%
+  select(stop1, mean) %>%
+  rename(time_to_GCT = mean)
+
+st = st %>%
+  left_join(time_to_NHV, by = c("stop_name" = "stop1")) %>%
+  left_join(time_to_GCT, by = c("stop_name" = "stop1"))
+st$time_to_GCT = round(st$time_to_GCT, 0)
+st$time_to_NHV = round(st$time_to_NHV, 0)
+
+dc$asian.p = round(dc$asian.p, 2)
+
+write_csv(st, "cleaned_stops.csv")
+write_csv(tr, "cleaned_trips.csv")
+
+st = read_csv("cleaned_stops.csv")
+head(st)
+tr = read_csv("cleaned_trips.csv")
+head(tr)
+
+
+```
+
+```{r}
+pal1 = colorNumeric(palette = c(pubbackgray, 
+                                pubblue), 
+                    domain = NULL)
+
+dc@data$label = paste0("GEOID: ", dc@data$GEOID, "<br>", 
+                      "County: ", dc@data$county, "<br>",
+                      "Median House Value: ", dc@data$house.value, "<br>",
+                      "Asian Population: ", dc@data$asian.p, "%")
+
+map1 = leaflet() %>%
+  addTiles() %>%
+  
+  addPolygons(data = dc,
+    fillColor = ~pal1(house.value), 
+                label = ~label %>% lapply(htmltools::HTML), 
+                weight = 0.5,
+                color = 'black',
+                fillOpacity = 0.7) %>%
+    setView(lng = -72.79458, 
+            lat = 41.51979, 
+            zoom = 9) %>%
+  
+    addCircleMarkers(data = st,
+                   ~stop_lon, ~stop_lat,
+                   radius = 5,
+                   color = pubred,
+                   popup = ~paste("Station:", stop_name,"<br>",
+                                  "Avg Time to NHV:", time_to_NHV, "min", "<br>",
+                                  "Avg Time to GCT:", time_to_GCT, "min")) %>%
+    addTiles()
+
+map1
+
+
+```
+
+## 2. Explanation
+
+Briefly explain the choices you made for your visualization(s). What do you think the prospective homeowner will find most useful? Are there any locations in particular that stand out?
+
+I decided to make one visualization with a broad view of the main considerations on the prospective homeowner's mind (access to transportation and house cost) for ease of access for information. At large, one can see where less expensive to live (the lighter color gradient on the map), then when you hover over the area with a lesser cost of information, more information the buyer would want to know appear such as the County, the exact median household value, and the percentage of Asian people in the area. If the percentage of Asian people is low, or the house prices are too high, the buyer can hover to examine other areas with comparable values. Then, I overlayed a map of the trainstops. When you click on the circle marker, you can see more information such as the station name and the average time it takes to arrive at New Haven station/Grand Central Station. However, even without clicking for more information, you can still see the proximity of a station. Furthermore, stations that don't have direct connections to NHV or GCT will display an NA value for whichever station does not have direct connection (these stations are included just in case perhaps one partner wants to drive). I think they will find the average time information and the median house value information the most useful. For me, I thought the following parcel stood out as a good candidate. Firstly, it has similar equivalent times in regards to train transportation to their respective jobs. However, in the parcel the stop is in, the house prices are slightly higher; however, as I hover to an area that's a little lighter a few miles away in Fairfield county, I find an area where homes are around \$200,000. Then, I just circle the area until I found a place that was at least 5% Asian. This area checks all the boxes listed.
+
+![](Screenshot%202025-02-16%20232508.png){width="422"}
+
+## Shiny
+
+### 3. Basic Shiny App
+
+Do the following to create a basic shiny app and publish it to shinyapps.io
+
+-   Configure R Studio to communicate with shinyapps.io by following the directions from this page <https://shiny.rstudio.com/articles/shinyapps.html> up to and including the "Method 1" section. You will show you how to install `rsconnect`, create a shinyapps.io account, and set up communication between R Studio and shinyapps.io. Note that you will only have to do this once.
+-   Create a new shiny app like we did in class by clicking File, New File, Shiny Web App. Name the app `pset5app1`, choose Single File, choose an appropriate directory, and click Create. An `app.R` file will open in R Studio.
+-   Click Run App to see the app. The app should appear in the Viewer tab in R Studio, or in its own window.
+-   In the upper right of the app, click Publish. Make sure the correct files and account are selected. Click Publish in the lower right.
+
+Paste the url for your app here. The url will be of the form [https://yourusername.shinyapps.io/pset5app1/](https://yourusername.shinyapps.io/yourappname/){.uri}
+
+```{r}
+library(rsconnect)
+```
+
+<https://mz27.shinyapps.io/pset5app1/>
+
+### 4. Shiny App for choosing home location
+
+Create a Shiny app that contains visualization you made in #1, and add at least one widget that allow the user to investigate the data by customizing the visualization in some useful way. For example, you could add a `sliderInput` or `selectInput` that helps you filter the data, or a `selectInput` that allows the user to choose how to color the points, etc.
+
+Different types of user inputs can be found here <https://shiny.rstudio.com/gallery/widget-gallery.html>
+
+Publish your shiny app to shinyapps.io, and paste the url for your app here:
+
+<https://mz27.shinyapps.io/pset5-Property-Values-Interactions-Splines-Shiny-Plotly/>
+
+Summarize in a sentence why you choose those user inputs and what you learned about the data from the app.
+
+I wanted to add user interactivity and flexibility in filtering areas based on the potential homebuyers' preferences (house price, diversity, train access, and commute time) to easily exclude dealbreakers and highlight available options, and I learned that even with strict criteria, such as commuting to NHV and Grand Central under 90 minutes and paying less than 500K, there are still plenty of viable options on the map.
+
+# CT Property data
+
+First let's load the CT property and keep only the New Haven properties.
+
+```{r}
+d = readRDS('data/coast.properties.rds')
+
+## I'm gonna change some column names 
+colnames(d) = gsub('_', '.', colnames(d))
+
+colnames(d)[colnames(d) == 'Assessed.Total'] = 'value'
+colnames(d)[colnames(d) == 'Number.of.Bedroom'] = 'beds'
+colnames(d)[colnames(d) == 'Number.of.Baths'] = 'baths'
+colnames(d)[colnames(d) == 'Number.of.Half.Baths'] = 'half.baths'
+colnames(d)[colnames(d) == 'Living.Area'] = 'living'
+colnames(d)[colnames(d) == 'SHAPE.Area'] = 'land'
+colnames(d)[colnames(d) == 'Condition.Description'] = 'cond'
+colnames(d)[colnames(d) == 'State.Use.Description'] = 'use'
+colnames(d)[colnames(d) == 'GlobalID'] = 'id'
+colnames(d)[colnames(d) == 'Mailing.Address'] = 'address'
+colnames(d)[colnames(d) == 'Mailing.City'] = 'city'
+colnames(d)[colnames(d) == 'Town.Name'] = 'town'
+colnames(d)[colnames(d) == 'Valuation.Year'] = 'val.year'
+colnames(d)[colnames(d) == 'Sale.Price'] = 'sale.price'
+colnames(d)[colnames(d) == 'Sale.Date'] = 'sale.date'
+colnames(d)[colnames(d) == 'AYB'] = 'ayb'
+colnames(d)[colnames(d) == 'EYB'] = 'eyb'
+
+d = d %>%
+  
+  filter(value != 0, 
+         grepl('Single Fam|SINGLE FAM|One Fam|ONE FAM', 
+               use), 
+         Qualified == 'Q', 
+         sale.price != 0, 
+         !is.na(living), 
+         living != 0, 
+         Condition %in% c( 'E', 'EX',             ## excellent
+                           'VG', 'G', 'GD',       ## very good, good
+                           'A+', 'A', 'AV', 'A-', ## avg+, avg, avg-
+                           'F', 'FR',             ## fair
+                           'P', 'VP' ),           ## poor, v poor
+         !duplicated(id)) %>%       
+  
+  mutate(cond = case_when(cond == 'EX' ~ 'Excellent', 
+                          cond == 'Avarage' ~ 'Average', 
+                          cond == 'AV' ~ 'Average',
+                          cond == 'F' ~ 'Fair', 
+                          cond == 'FR' ~ 'Fair', 
+                          cond == 'GD' ~ 'Good', 
+                          cond == 'G+' ~ 'Very Good', 
+                          TRUE ~ cond), 
+         
+         dist = as.numeric(dist), 
+         land = ifelse(land < 0, -land, land)) %>%
+  
+  select(value, living, land, 
+         beds, baths, half.baths, 
+         cond, use, dist, ayb, eyb, 
+         sale.price, sale.date,
+         address, city, town, id, 
+         centroid.x, centroid.y, 
+         point.x, point.y)
+
+d = d %>% 
+  filter(town == 'NEW HAVEN')
+
+
+
+```
+
+## 5. Data exploration with `ggplotly` and `plotly`
+
+Recall we noticed what looks like two distinct clouds of points in this visualization.
+
+```{r}
+dg = d %>%
+  mutate(label = paste0('Address: ', address, '<br>', 
+                        'City: ', city, '<br>',
+                        'Town: ', town))
+g = ggplot(dg, 
+       aes(x = log(living), 
+           y = log(value),
+           color = dist)) + 
+  geom_point() 
+
+g
+```
+
+Use `ggplotly` or `plotly` to make a interactive scatter plot of `log(value)` vs `living`. Add color, tooltip, or other features that help you investigate why there appears to be two distinct clouds of points. What characteristics do the properties in the upper right cluster of points have in common?
+
+```{r}
+library(plotly)
+
+gg = plot_ly(
+  data = dg,
+  x = ~log(living),
+  y = ~log(value),
+  color = ~dist,
+  type = 'scatter',
+  text = ~label
+)
+
+gg
+
+```
+
+The upper right cluster seem to contain more points that have a smaller distance to the coast (pretty much all are within 4000 units within the coast). Most of the points with distances further away from the coast cluster on the lower trend. However, it does not seem like a directly liner relationship as when the distance is less than 4000 units, the correlations look less direct. Perhaps there is another area the high value homes gravitate toward.
+
+```{r}
+d = d %>% 
+  mutate(coast = ifelse(dist <= 4000, 
+                        "yes", 
+                        'no')) %>%
+  filter(!is.na(coast))
+g2 = ggplot(d, 
+       aes(x = log(living), 
+           y = log(value), 
+           color = coast, 
+           group = coast)) + 
+  geom_point(alpha = 0.1) + 
+  geom_smooth(method = 'lm')
+
+g2 %>% pub()
+
+gg2 = g2 %>% 
+  ggplotly(tooltip = c('x', 'y', 'text'))
+
+gg2
+
+```
+
+## 6. Data exploration with `leaflet`
+
+Use `leaflet` to make an interactive map of the properties. Add color, tooltips, or other features that helps you further investigate why there are two clouds of points. Does this map confirm your conclusions from the previous question?
+
+```{r}
+
+pal1 = colorNumeric(palette = c(pubbackgray, 
+                                pubblue), 
+                    domain = NULL)
+
+d$slope = log(d$value)/log(d$living)
+
+map2 = leaflet(d) %>%
+        addTiles() %>%
+        addCircleMarkers(
+          lng = ~centroid.x, 
+          lat = ~centroid.y, 
+          radius = ~log(living) / 2, 
+          color = ~pal1(slope),
+          stroke = FALSE,
+          fillOpacity = 0.7,
+          popup = ~paste0("<b>Value: </b>$", format(value, big.mark = ","), "<br>",
+                          "<b>Distance to Coast: </b>", round(dist, 2), "m")
+        ) %>%
+        addLegend("bottomright", pal = pal1, values = d$slope,
+                  title = "Home Value($)/Living Area", opacity = 1)
+
+map2
+
+```
+
+This map gives more insight to the question above. While it does look like some more valuable properties are closer to the coast, it seems as if proximity to other locations such as East Rock/Yale and the highway are bigger indicator for home value. These two places just also seem to be closer to the coast, helping the hypothesis. This could explain why there are distinct clusters as different neighborhoods probably trend in value closer.
